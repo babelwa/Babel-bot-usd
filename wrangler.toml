@@ -1,4 +1,4 @@
 name = "babelusd-bot"
 main = "src/index.js"
 compatibility_date = "2026-01-28"
-account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
+account_id = "13d321fe4807b311f541c3000603c7a3"
