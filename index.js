@@ -1,11 +1,26 @@
+/**
+ * Babel USD Signals Bot - Cloudflare Worker (Telegram Webhook)
+ *
+ * ENV VARS (Cloudflare -> Worker -> Settings -> Variables):
+ *  - BOT_TOKEN (Secret)       : token BotFather
+ *  - ADMIN_ID (Text)          : ton Telegram user id (ex: "123456789")
+ *  - VIP_CHAT_ID (Text, opt)  : id du canal/groupe VIP (ex: "-1001234567890")
+ *  - WEBHOOK_SECRET (Secret, opt) : si tu veux sécuriser le webhook
+ */
+
 const API = "https://api.telegram.org";
 
-const TEMPLATE_SIGNAL = `XAUUSD BUY à 5084 – 5087\n\nSL : 5078\nTP1 : 5093\nTP2 : 5100\n\nℹ️ Risk management strict.`;
-
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+function text(data, status = 200) {
+  return new Response(data, {
+    status,
+    headers: { "content-type": "text/plain; charset=utf-8" },
   });
 }
 
@@ -17,119 +32,150 @@ async function tg(env, method, payload) {
     body: JSON.stringify(payload),
   });
   const data = await res.json().catch(() => ({}));
-  return { ok: res.ok && data.ok, status: res.status, data };
+  if (!data.ok) {
+    // Log côté Cloudflare (Observability)
+    console.log("Telegram API error:", method, data);
+  }
+  return data;
 }
 
-async function sendMessage(env, chatId, text, extra = {}) {
+async function sendMessage(env, chatId, message, extra = {}) {
   return tg(env, "sendMessage", {
     chat_id: chatId,
-    text,
+    text: message,
     parse_mode: "HTML",
+    disable_web_page_preview: true,
     ...extra,
   });
 }
 
-function isAdmin(env, userId) {
-  const a = String(env.ADMIN_ID || "").trim();
-  return a !== "" && String(userId) === a;
+function isAdmin(env, fromId) {
+  return String(fromId) === String(env.ADMIN_ID);
 }
 
-function cmdOf(text) {
-  const t = String(text || "").trim();
-  if (!t.startsWith("/")) return null;
-  return t.split(/\s+/)[0].toLowerCase();
-}
-
-function helpText() {
-  return (
-    "<b>Menu</b>\n" +
-    "• /buy - Prix & paiement\n" +
-    "• /signal - Exemple signal\n" +
-    "• /help - Aide\n" +
-    "• (Admin) /push <signal>\n"
-  );
-}
-
-function buyText(env) {
-  const w = env.PRICE_WEEK || "25";
-  const m = env.PRICE_MONTH || "84";
-  const addr = env.TRC20_ADDRESS || "TON_ADRESSE_TRC20";
-  const sup = env.SUPPORT_USER || "babelwallstreet";
-  return (
-    `<b>Accès VIP Babel USD</b>\n\n` +
-    `• 1 semaine : <b>${w}$</b>\n` +
-    `• 1 mois : <b>${m}$</b>\n\n` +
-    `<b>Paiement USDT (TRC20)</b>\n${addr}\n\n` +
-    `Support : @${sup}`
-  );
+function formatSignalExample() {
+  // Ton format canal privé
+  return [
+    "<b>XAUUSD BUY à 5084 – 5087</b>",
+    "",
+    "<b>SL</b> : 5078",
+    "<b>TP1</b> : 5093",
+    "<b>TP2</b> : 5100",
+    "",
+    "ℹ️ <i>Risk management strict.</i>",
+  ].join("\n");
 }
 
 async function handleMessage(env, msg) {
   const chatId = msg.chat?.id;
-  const userId = msg.from?.id;
-  const text = msg.text || "";
-  const cmd = cmdOf(text);
+  const fromId = msg.from?.id;
+  const textMsg = (msg.text || "").trim();
 
-  if (cmd === "/start") {
-    await sendMessage(env, chatId, `Bienvenue 👋\n\n${helpText()}`);
-    return;
-  }
-  if (cmd === "/help") {
-    await sendMessage(env, chatId, helpText());
-    return;
-  }
-  if (cmd === "/buy") {
-    await sendMessage(env, chatId, buyText(env));
-    return;
-  }
-  if (cmd === "/signal") {
-    await sendMessage(env, chatId, `<b>Format signal</b>\n\n${TEMPLATE_SIGNAL}`);
-    return;
-  }
-  if (cmd === "/push") {
-    if (!isAdmin(env, userId)) {
-      await sendMessage(env, chatId, "Accès refusé.");
-      return;
-    }
-    const vip = String(env.VIP_CHAT_ID || "").trim();
-    if (!vip) {
-      await sendMessage(env, chatId, "VIP_CHAT_ID n'est pas configuré.");
-      return;
-    }
-    const content = text.replace(/^\/push\s*/i, "").trim();
-    if (!content) {
-      await sendMessage(env, chatId, "Utilise: /push <ton signal>");
-      return;
-    }
-    const r = await sendMessage(env, vip, content);
-    await sendMessage(env, chatId, r.ok ? "✅ Envoyé." : `Erreur: ${r.status}`);
+  if (!chatId) return;
+
+  // Commandes de base
+  if (textMsg === "/start") {
+    const reply = [
+      "✅ Bot connecté.",
+      "",
+      "Commandes :",
+      "• /ping",
+      "• /signal (admin)",
+      "• /post <message> (admin -> poste dans VIP_CHAT_ID)",
+    ].join("\n");
+    await sendMessage(env, chatId, reply);
     return;
   }
 
-  await sendMessage(env, chatId, "Commande inconnue. Tape /help");
+  if (textMsg === "/ping") {
+    await sendMessage(env, chatId, "🏓 pong");
+    return;
+  }
+
+  // Admin only
+  if (textMsg === "/signal") {
+    if (!isAdmin(env, fromId)) {
+      await sendMessage(env, chatId, "⛔️ Commande réservée à l’admin.");
+      return;
+    }
+    await sendMessage(env, chatId, formatSignalExample());
+    return;
+  }
+
+  // /post <message>
+  if (textMsg.startsWith("/post")) {
+    if (!isAdmin(env, fromId)) {
+      await sendMessage(env, chatId, "⛔️ Commande réservée à l’admin.");
+      return;
+    }
+    if (!env.VIP_CHAT_ID) {
+      await sendMessage(env, chatId, "⚠️ VIP_CHAT_ID n’est pas configuré dans Cloudflare.");
+      return;
+    }
+
+    const body = textMsg.replace(/^\/post\s*/i, "").trim();
+    if (!body) {
+      await sendMessage(env, chatId, "Utilisation : /post <ton message>");
+      return;
+    }
+
+    await sendMessage(env, env.VIP_CHAT_ID, body);
+    await sendMessage(env, chatId, "✅ Message posté dans le canal VIP.");
+    return;
+  }
+
+  // Réponse simple si l’utilisateur écrit sans commande
+  await sendMessage(env, chatId, "✅ Reçu. Tape /start pour voir les commandes.");
+}
+
+async function handleCallback(env, cb) {
+  // Si plus tard tu ajoutes des boutons inline
+  const chatId = cb.message?.chat?.id;
+  if (chatId) await sendMessage(env, chatId, "✅ Callback reçu.");
+  // Toujours répondre au callback sinon Telegram affiche un loader
+  await tg(env, "answerCallbackQuery", { callback_query_id: cb.id, text: "OK" });
 }
 
 export default {
   async fetch(request, env, ctx) {
-    if (env.WEBHOOK_SECRET) {
-      const sec = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-      if (sec !== env.WEBHOOK_SECRET) return json({ ok: false, error: "Unauthorized" }, 401);
+    // Vérifs minimales
+    if (!env.BOT_TOKEN) return text("Missing BOT_TOKEN", 500);
+    if (!env.ADMIN_ID) return text("Missing ADMIN_ID", 500);
+
+    const url = new URL(request.url);
+
+    // GET = ping / healthcheck
+    if (request.method === "GET") {
+      if (url.pathname === "/health" || url.pathname === "/") {
+        return text("OK");
+      }
+      return text("OK");
     }
 
-    if (request.method === "GET") return new Response("OK", { status: 200 });
-    if (request.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405);
+    // Protection optionnelle par secret header Telegram (si tu l’actives)
+    if (env.WEBHOOK_SECRET) {
+      const sec = request.headers.get("x-telegram-bot-api-secret-token");
+      if (sec !== env.WEBHOOK_SECRET) {
+        return text("Unauthorized", 401);
+      }
+    }
 
+    // POST = webhook Telegram
     let update;
     try {
       update = await request.json();
     } catch {
-      return json({ ok: false, error: "Bad JSON" }, 400);
+      return text("Bad JSON", 400);
     }
 
-    ctx.waitUntil((async () => {
-      if (update.message) await handleMessage(env, update.message);
-    })());
+    // On répond vite à Telegram, et on traite en arrière-plan
+    if (update.message) {
+      ctx.waitUntil(handleMessage(env, update.message));
+    } else if (update.callback_query) {
+      ctx.waitUntil(handleCallback(env, update.callback_query));
+    }
 
-    return new Response("OK", { status: 200 });
+    // IMPORTANT : 200 + texte simple, pas de redirect
+    return text("OK", 200);
   },
 };
