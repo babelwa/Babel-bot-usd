@@ -138,29 +138,27 @@ async function handleCallback(env, cb) {
 
 export default {
   async fetch(request, env, ctx) {
-    // Vérifs minimales
     if (!env.BOT_TOKEN) return text("Missing BOT_TOKEN", 500);
     if (!env.ADMIN_ID) return text("Missing ADMIN_ID", 500);
 
     const url = new URL(request.url);
 
-    // GET = ping / healthcheck
+    // ✅ Healthcheck simple
     if (request.method === "GET") {
-      if (url.pathname === "/health" || url.pathname === "/") {
-        return text("OK");
-      }
-      return text("OK");
+      return text("OK", 200);
     }
 
-    // Protection optionnelle par secret header Telegram (si tu l’actives)
+    // ✅ On n'accepte Telegram QUE sur /webhook
+    if (url.pathname !== "/webhook") {
+      return text("Not Found", 404);
+    }
+
+    // ✅ Protection optionnelle par secret header (si activé)
     if (env.WEBHOOK_SECRET) {
       const sec = request.headers.get("x-telegram-bot-api-secret-token");
-      if (sec !== env.WEBHOOK_SECRET) {
-        return text("Unauthorized", 401);
-      }
+      if (sec !== env.WEBHOOK_SECRET) return text("Unauthorized", 401);
     }
 
-    // POST = webhook Telegram
     let update;
     try {
       update = await request.json();
@@ -168,14 +166,12 @@ export default {
       return text("Bad JSON", 400);
     }
 
-    // On répond vite à Telegram, et on traite en arrière-plan
     if (update.message) {
       ctx.waitUntil(handleMessage(env, update.message));
     } else if (update.callback_query) {
       ctx.waitUntil(handleCallback(env, update.callback_query));
     }
 
-    // IMPORTANT : 200 + texte simple, pas de redirect
     return text("OK", 200);
   },
 };
