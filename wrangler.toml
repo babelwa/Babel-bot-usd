@@ -1,4 +1,15 @@
+# wrangler.toml (à la racine du repo)
+
 name = "babelusd-bot"
-main = "index.js"
-compatibility_date = "2026-01-28"
-account_id = "13d321fe4807b311f541c3000603c7a3"
+main = "src/index.js"
+compatibility_date = "2026-01-29"
+
+# (Optionnel) si tu utilises un environnement "production"
+# [env.production]
+# name = "babelusd-bot"
+
+# ✅ Secrets/vars à créer dans Cloudflare Dashboard (pas ici) :
+# - BOT_TOKEN (Secret)
+# - ADMIN_ID (Text)
+# - VIP_CHAT_ID (Text, optionnel)
+# - WEBHOOK_SECRET (Secret, optionnel)
