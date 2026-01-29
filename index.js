@@ -1,21 +1,4 @@
-/**
- * Babel USD Signals Bot - Cloudflare Worker (Telegram Webhook)
- *
- * ENV VARS (Cloudflare -> Worker -> Settings -> Variables):
- *  - BOT_TOKEN (Secret)       : token BotFather
- *  - ADMIN_ID (Text)          : ton Telegram user id (ex: "123456789")
- *  - VIP_CHAT_ID (Text, opt)  : id du canal/groupe VIP (ex: "-1001234567890")
- *  - WEBHOOK_SECRET (Secret, opt) : si tu veux sécuriser le webhook
- */
-
 const API = "https://api.telegram.org";
-
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-}
 
 function text(data, status = 200) {
   return new Response(data, {
@@ -32,10 +15,7 @@ async function tg(env, method, payload) {
     body: JSON.stringify(payload),
   });
   const data = await res.json().catch(() => ({}));
-  if (!data.ok) {
-    // Log côté Cloudflare (Observability)
-    console.log("Telegram API error:", method, data);
-  }
+  if (!data.ok) console.log("Telegram API error:", method, data);
   return data;
 }
 
@@ -54,7 +34,6 @@ function isAdmin(env, fromId) {
 }
 
 function formatSignalExample() {
-  // Ton format canal privé
   return [
     "<b>XAUUSD BUY à 5084 – 5087</b>",
     "",
@@ -70,10 +49,8 @@ async function handleMessage(env, msg) {
   const chatId = msg.chat?.id;
   const fromId = msg.from?.id;
   const textMsg = (msg.text || "").trim();
-
   if (!chatId) return;
 
-  // Commandes de base
   if (textMsg === "/start") {
     const reply = [
       "✅ Bot connecté.",
@@ -92,7 +69,6 @@ async function handleMessage(env, msg) {
     return;
   }
 
-  // Admin only
   if (textMsg === "/signal") {
     if (!isAdmin(env, fromId)) {
       await sendMessage(env, chatId, "⛔️ Commande réservée à l’admin.");
@@ -102,14 +78,13 @@ async function handleMessage(env, msg) {
     return;
   }
 
-  // /post <message>
   if (textMsg.startsWith("/post")) {
     if (!isAdmin(env, fromId)) {
       await sendMessage(env, chatId, "⛔️ Commande réservée à l’admin.");
       return;
     }
     if (!env.VIP_CHAT_ID) {
-      await sendMessage(env, chatId, "⚠️ VIP_CHAT_ID n’est pas configuré dans Cloudflare.");
+      await sendMessage(env, chatId, "⚠️ VIP_CHAT_ID n’est pas configuré.");
       return;
     }
 
@@ -124,15 +99,12 @@ async function handleMessage(env, msg) {
     return;
   }
 
-  // Réponse simple si l’utilisateur écrit sans commande
   await sendMessage(env, chatId, "✅ Reçu. Tape /start pour voir les commandes.");
 }
 
 async function handleCallback(env, cb) {
-  // Si plus tard tu ajoutes des boutons inline
   const chatId = cb.message?.chat?.id;
   if (chatId) await sendMessage(env, chatId, "✅ Callback reçu.");
-  // Toujours répondre au callback sinon Telegram affiche un loader
   await tg(env, "answerCallbackQuery", { callback_query_id: cb.id, text: "OK" });
 }
 
@@ -141,19 +113,10 @@ export default {
     if (!env.BOT_TOKEN) return text("Missing BOT_TOKEN", 500);
     if (!env.ADMIN_ID) return text("Missing ADMIN_ID", 500);
 
-    const url = new URL(request.url);
+    // GET = ping
+    if (request.method === "GET") return text("OK");
 
-    // ✅ Healthcheck simple
-    if (request.method === "GET") {
-      return text("OK", 200);
-    }
-
-    // ✅ On n'accepte Telegram QUE sur /webhook
-    if (url.pathname !== "/webhook") {
-      return text("Not Found", 404);
-    }
-
-    // ✅ Protection optionnelle par secret header (si activé)
+    // Optionnel: protection secret header (si activé)
     if (env.WEBHOOK_SECRET) {
       const sec = request.headers.get("x-telegram-bot-api-secret-token");
       if (sec !== env.WEBHOOK_SECRET) return text("Unauthorized", 401);
@@ -166,10 +129,17 @@ export default {
       return text("Bad JSON", 400);
     }
 
+    console.log("Incoming update keys:", Object.keys(update || {}));
+
+    // Telegram updates possibles
     if (update.message) {
       ctx.waitUntil(handleMessage(env, update.message));
     } else if (update.callback_query) {
       ctx.waitUntil(handleCallback(env, update.callback_query));
+    } else if (update.channel_post) {
+      // Si tu écris dans un canal, c’est ici que ça arrive
+      console.log("channel_post received");
+      // Optionnel: tu peux traiter/ignorer
     }
 
     return text("OK", 200);
