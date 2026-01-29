@@ -1,16 +1,11 @@
 /**
  * Babel USD Signals Bot - Cloudflare Worker (Telegram Webhook)
  *
- * ✅ Endpoints
- *   - POST  /webhook   -> Telegram envoie les updates ici
- *   - GET   /          -> OK (ping)
- *   - GET   /health    -> OK (ping)
- *
- * ✅ Variables (Cloudflare -> Worker -> Settings -> Variables & secrets)
- *   - BOT_TOKEN (Secret)        : token BotFather
- *   - ADMIN_ID (Text)           : ton Telegram user id (ex: "123456789")
- *   - VIP_CHAT_ID (Text, opt)   : id canal/groupe VIP (ex: "-1001234567890")
- *   - WEBHOOK_SECRET (Secret,opt): si tu veux sécuriser (header Telegram secret token)
+ * Variables Cloudflare (Worker -> Settings -> Variables):
+ *  - BOT_TOKEN (Secret)       : token BotFather
+ *  - ADMIN_ID (Text)          : ton Telegram user id (ex: "123456789")
+ *  - VIP_CHAT_ID (Text, opt)  : id du canal/groupe VIP (ex: "-1001234567890")
+ *  - WEBHOOK_SECRET (Secret, opt) : protège le webhook via header secret
  */
 
 const API = "https://api.telegram.org";
@@ -38,10 +33,7 @@ async function tg(env, method, payload) {
   });
 
   const data = await res.json().catch(() => ({}));
-
-  // Log utile dans Observability
-  if (!data?.ok) console.log("Telegram API error:", method, data);
-
+  if (!data.ok) console.log("Telegram API error:", method, data);
   return data;
 }
 
@@ -74,11 +66,11 @@ function formatSignalExample() {
 async function handleMessage(env, msg) {
   const chatId = msg.chat?.id;
   const fromId = msg.from?.id;
-  const textMsg = (msg.text || "").trim();
+  const txt = (msg.text || "").trim();
 
   if (!chatId) return;
 
-  if (textMsg === "/start") {
+  if (txt === "/start") {
     const reply = [
       "✅ Bot connecté.",
       "",
@@ -86,17 +78,27 @@ async function handleMessage(env, msg) {
       "• /ping",
       "• /signal (admin)",
       "• /post <message> (admin -> poste dans VIP_CHAT_ID)",
+      "• /id (affiche ton id + id du chat)",
     ].join("\n");
     await sendMessage(env, chatId, reply);
     return;
   }
 
-  if (textMsg === "/ping") {
+  if (txt === "/ping") {
     await sendMessage(env, chatId, "🏓 pong");
     return;
   }
 
-  if (textMsg === "/signal") {
+  if (txt === "/id") {
+    await sendMessage(
+      env,
+      chatId,
+      `👤 <b>Ton ID</b>: <code>${fromId}</code>\n💬 <b>Chat ID</b>: <code>${chatId}</code>`
+    );
+    return;
+  }
+
+  if (txt === "/signal") {
     if (!isAdmin(env, fromId)) {
       await sendMessage(env, chatId, "⛔️ Commande réservée à l’admin.");
       return;
@@ -105,7 +107,7 @@ async function handleMessage(env, msg) {
     return;
   }
 
-  if (textMsg.startsWith("/post")) {
+  if (txt.startsWith("/post")) {
     if (!isAdmin(env, fromId)) {
       await sendMessage(env, chatId, "⛔️ Commande réservée à l’admin.");
       return;
@@ -115,7 +117,7 @@ async function handleMessage(env, msg) {
       return;
     }
 
-    const body = textMsg.replace(/^\/post\s*/i, "").trim();
+    const body = txt.replace(/^\/post\s*/i, "").trim();
     if (!body) {
       await sendMessage(env, chatId, "Utilisation : /post <ton message>");
       return;
@@ -137,54 +139,43 @@ async function handleCallback(env, cb) {
 
 export default {
   async fetch(request, env, ctx) {
-    // --- Garde-fous ---
+    // Variables obligatoires
     if (!env.BOT_TOKEN) return text("Missing BOT_TOKEN", 500);
     if (!env.ADMIN_ID) return text("Missing ADMIN_ID", 500);
 
     const url = new URL(request.url);
 
-    // --- Healthcheck (GET) ---
+    // GET: healthcheck (aucun redirect, juste OK)
     if (request.method === "GET") {
-      if (url.pathname === "/" || url.pathname === "/health") return text("OK", 200);
+      if (url.pathname === "/health" || url.pathname === "/" || url.pathname === "/webhook") {
+        return text("OK", 200);
+      }
       return text("OK", 200);
     }
 
-    // --- Telegram doit frapper /webhook en POST ---
-    if (request.method !== "POST") return text("Method Not Allowed", 405);
-    if (url.pathname !== "/webhook") return text("Not Found", 404);
-
-    // --- Optionnel: secret header Telegram ---
-    // Si tu mets WEBHOOK_SECRET dans Cloudflare, mets aussi ce secret au moment du setWebhook côté Telegram
+    // Protection webhook optionnelle (si WEBHOOK_SECRET est défini)
     if (env.WEBHOOK_SECRET) {
-      const sec =
-        request.headers.get("x-telegram-bot-api-secret-token") ||
-        request.headers.get("X-Telegram-Bot-Api-Secret-Token"); // au cas où
+      const sec = request.headers.get("x-telegram-bot-api-secret-token");
       if (sec !== env.WEBHOOK_SECRET) return text("Unauthorized", 401);
     }
 
-    // --- Lire l'update ---
+    // POST: Telegram webhook
     let update;
     try {
       update = await request.json();
-    } catch (e) {
-      console.log("Bad JSON:", e);
+    } catch {
       return text("Bad JSON", 400);
     }
 
-    // Log léger (utile pour debug)
     console.log("Incoming update keys:", Object.keys(update || {}));
 
-    // Répondre vite à Telegram, traiter en arrière-plan
-    if (update?.message) {
+    if (update.message) {
       ctx.waitUntil(handleMessage(env, update.message));
-    } else if (update?.callback_query) {
+    } else if (update.callback_query) {
       ctx.waitUntil(handleCallback(env, update.callback_query));
-    } else {
-      // Rien à traiter, mais on répond OK quand même
-      console.log("Unhandled update:", update);
     }
 
-    // IMPORTANT: pas de redirect, juste 200 + texte
+    // Telegram veut 200 OK (pas 302)
     return text("OK", 200);
   },
 };
