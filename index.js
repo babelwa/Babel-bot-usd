@@ -1,4 +1,4 @@
-/**
+ /**
  * Babel USD Signals Bot - Cloudflare Worker (Telegram Webhook)
  *
  * Variables Cloudflare (Worker -> Settings -> Variables):
