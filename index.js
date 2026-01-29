@@ -1,4 +1,4 @@
- const API = "https://api.telegram.org";
+const API = "https://api.telegram.org";
 
 function text(data, status = 200) {
   return new Response(data, {
